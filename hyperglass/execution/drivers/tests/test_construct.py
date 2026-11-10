@@ -1,12 +1,15 @@
 # Standard Library
 import typing as t
+from types import SimpleNamespace
 
 # Third Party
 import pytest
+from pydantic import BaseModel, ValidationError
 
 # Project
 from hyperglass.state import use_state
 from hyperglass.models.api import Query
+from hyperglass.models.api.query import QueryTarget
 from hyperglass.configuration import init_ui_params
 from hyperglass.models.directive import Directives
 from hyperglass.models.config.params import Params
@@ -88,3 +91,31 @@ def test_construct(state):
     )
     constructor = Construct(device=state.devices["test1"], query=query)
     assert constructor.target == "192.0.2.0/24"
+
+
+@pytest.mark.parametrize(
+    "platform,target,expected",
+    [
+        ("bird", "2001:db8::1", "ping -6 -c 5 2001:db8::1"),
+        ("bird", "fe80::1%;id", "ping -6 -c 5 'fe80::1%;id'"),
+        ("bird", "fe80::1%$(id)", "ping -6 -c 5 'fe80::1%$(id)'"),
+        ("juniper", "fe80::1%;id", "ping -6 -c 5 fe80::1%;id"),
+    ],
+)
+def test_format_quotes_shell_targets(platform, target, expected):
+    device = SimpleNamespace(platform=platform, name="test1", attrs={})
+    query = SimpleNamespace(query_target=target, directive=None, device=device)
+    constructor = Construct.__new__(Construct)
+    constructor.device = device
+    constructor.target = target
+    assert constructor.format("ping -6 -c 5 {target}") == expected
+
+
+@pytest.mark.parametrize("target", ["2001:db8::1\nshow version", "2001:db8::1\x00", "2001:db8::1\x7f"])
+def test_query_target_rejects_control_characters(target):
+    with pytest.raises(ValidationError):
+        QueryTargetModel(query_target=target)
+
+
+class QueryTargetModel(BaseModel):
+    query_target: QueryTarget
